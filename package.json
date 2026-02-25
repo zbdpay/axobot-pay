@@ -1,0 +1,51 @@
+{
+  "name": "@zbdpay/agent-pay",
+  "version": "0.0.0-development",
+  "description": "L402 middleware foundation with Express, Hono, and Next adapters",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./next": {
+      "types": "./dist/next.d.ts",
+      "import": "./dist/next.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "npm run typecheck",
+    "release": "semantic-release",
+    "release:dry-run": "SEMANTIC_RELEASE_DRY_RUN=true semantic-release --dry-run --no-ci",
+    "test": "npm run build && node --test test/**/*.test.js",
+    "typecheck": "tsc --noEmit",
+    "smoke:adapters": "node ./test/smoke/adapters-smoke.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^11.0.6",
+    "@semantic-release/npm": "^12.0.2",
+    "@semantic-release/release-notes-generator": "^14.1.0",
+    "@types/node": "^24.3.0",
+    "conventional-changelog-conventionalcommits": "^8.0.0",
+    "semantic-release": "^24.2.3",
+    "typescript": "^5.9.2"
+  }
+}
