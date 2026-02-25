@@ -1,6 +1,6 @@
 {
   "name": "@zbdpay/agent-pay",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "L402 middleware foundation with Express, Hono, and Next adapters",
   "license": "MIT",
   "repository": {

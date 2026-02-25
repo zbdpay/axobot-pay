@@ -1,3 +1,9 @@
+## [1.0.2](https://github.com/zbdpay/agent-pay/compare/1.0.1...1.0.2) (2026-02-25)
+
+### Bug Fixes
+
+* retrigger release after npm token rotation ([96259e6](https://github.com/zbdpay/agent-pay/commit/96259e6224d3ee941a0a4d0edc38ea80e226b0b4))
+
 ## [1.0.1](https://github.com/zbdpay/agent-pay/compare/1.0.0...1.0.1) (2026-02-25)
 
 ### Bug Fixes
