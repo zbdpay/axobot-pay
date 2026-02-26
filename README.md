@@ -7,6 +7,8 @@ Supports:
 - Hono middleware
 - Next.js route wrapper (`@zbdpay/agent-pay/next`)
 
+Want to run this immediately? See [Examples (Fastest Way to Run)](#examples-fastest-way-to-run).
+
 ## Requirements
 
 - Node.js `>=22`
@@ -83,7 +85,9 @@ export const GET = withPaymentRequired(
 - `ZBD_API_KEY`: required unless passed via config
 - `ZBD_API_BASE_URL`: optional, default `https://api.zbdpay.com`
 
-## Examples
+## Examples (Fastest Way to Run)
+
+Use this local script path first to validate your environment before integrating middleware into your app.
 
 - `examples/http-server.mjs`: minimal Node HTTP server using `createPaymentMiddlewareFoundation`
 
