@@ -1,3 +1,9 @@
+## [1.0.3](https://github.com/zbdpay/agent-pay/compare/1.0.2...1.0.3) (2026-02-26)
+
+### Bug Fixes
+
+* harden L402 challenge flow and add debug examples ([474ef96](https://github.com/zbdpay/agent-pay/commit/474ef96a8418fb2e552faa7b0ce0e78ed1888aca))
+
 ## [1.0.2](https://github.com/zbdpay/agent-pay/compare/1.0.1...1.0.2) (2026-02-25)
 
 ### Bug Fixes
