@@ -126,8 +126,9 @@ export const createPaymentMiddlewareFoundation = <RequestLike>(
             },
             body,
           };
-        } catch {
-          return denyFromError(createInvoiceCreationFailedError());
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : undefined;
+          return denyFromError(createInvoiceCreationFailedError(reason));
         }
       }
 

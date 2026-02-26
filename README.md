@@ -83,6 +83,29 @@ export const GET = withPaymentRequired(
 - `ZBD_API_KEY`: required unless passed via config
 - `ZBD_API_BASE_URL`: optional, default `https://api.zbdpay.com`
 
+## Examples
+
+- `examples/http-server.mjs`: minimal Node HTTP server using `createPaymentMiddlewareFoundation`
+
+Run locally from this repo:
+
+```bash
+npm run build
+ZBD_API_KEY=<your_api_key> npm run example:http-server
+```
+
+Enable verbose host-side debug logs:
+
+```bash
+ZBD_PAY_DEBUG=1 ZBD_API_KEY=<your_api_key> npm run example:http-server
+```
+
+In a second terminal, consume the paid route with your local wallet CLI:
+
+```bash
+zbdw fetch "http://localhost:8787/protected" --max-sats 100
+```
+
 ## L402 Flow
 
 When a request has no valid auth proof:
@@ -137,6 +160,7 @@ npm run test
 npm run lint
 npm run typecheck
 npm run smoke:adapters
+npm run example:http-server
 npm run release:dry-run
 ```
 

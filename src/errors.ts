@@ -69,10 +69,17 @@ export const createPricingError = (): AgentPayError => {
   return new AgentPayError("pricing_error", "Failed to resolve price", 500);
 };
 
-export const createInvoiceCreationFailedError = (): AgentPayError => {
+export const createInvoiceCreationFailedError = (
+  reason?: string,
+): AgentPayError => {
+  const message =
+    typeof reason === "string" && reason.trim().length > 0
+      ? `Failed to create payment challenge (${reason})`
+      : "Failed to create payment challenge";
+
   return new AgentPayError(
     "invoice_creation_failed",
-    "Failed to create payment challenge",
+    message,
     502,
   );
 };

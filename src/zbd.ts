@@ -18,6 +18,101 @@ const readObject = (value: unknown): Record<string, unknown> => {
   return {};
 };
 
+const BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+const decodeBech32Words = (value: string): number[] => {
+  const words: number[] = [];
+  for (const char of value) {
+    const index = BECH32_CHARSET.indexOf(char);
+    if (index < 0) {
+      throw new Error("Invalid bech32 character");
+    }
+    words.push(index);
+  }
+  return words;
+};
+
+const wordsToBytes = (words: number[]): Uint8Array => {
+  let bitBuffer = 0;
+  let bitCount = 0;
+  const bytes: number[] = [];
+
+  for (const word of words) {
+    bitBuffer = (bitBuffer << 5) | word;
+    bitCount += 5;
+
+    while (bitCount >= 8) {
+      bitCount -= 8;
+      bytes.push((bitBuffer >> bitCount) & 0xff);
+    }
+  }
+
+  return Uint8Array.from(bytes);
+};
+
+const bytesToHex = (bytes: Uint8Array): string => {
+  return Array.from(bytes)
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+};
+
+const extractPaymentHashFromBolt11 = (rawInvoice: string): string | null => {
+  const invoice = rawInvoice.toLowerCase().startsWith("lightning:")
+    ? rawInvoice.slice("lightning:".length)
+    : rawInvoice;
+
+  const normalized = invoice.toLowerCase();
+  const separatorIndex = normalized.lastIndexOf("1");
+  if (separatorIndex <= 0 || separatorIndex >= normalized.length - 7) {
+    return null;
+  }
+
+  const dataAndChecksum = normalized.slice(separatorIndex + 1);
+  if (dataAndChecksum.length <= 6) {
+    return null;
+  }
+
+  const payloadWords = decodeBech32Words(dataAndChecksum.slice(0, -6));
+  if (payloadWords.length <= 7 + 104) {
+    return null;
+  }
+
+  let index = 7;
+  while (index + 3 <= payloadWords.length - 104) {
+    const tagValue = payloadWords[index];
+    const lengthHigh = payloadWords[index + 1];
+    const lengthLow = payloadWords[index + 2];
+    if (
+      typeof tagValue !== "number" ||
+      typeof lengthHigh !== "number" ||
+      typeof lengthLow !== "number"
+    ) {
+      return null;
+    }
+
+    const length = (lengthHigh << 5) + lengthLow;
+    index += 3;
+
+    if (length < 0 || index + length > payloadWords.length - 104) {
+      return null;
+    }
+
+    const tag = BECH32_CHARSET[tagValue] ?? "";
+    const words = payloadWords.slice(index, index + length);
+    index += length;
+
+    if (tag === "p") {
+      const bytes = wordsToBytes(words);
+      if (bytes.length >= 32) {
+        return bytesToHex(bytes.slice(0, 32));
+      }
+      return null;
+    }
+  }
+
+  return null;
+};
+
 const getString = (
   data: Record<string, unknown>,
   keys: string[],
@@ -54,6 +149,36 @@ const parseJson = async (response: Response): Promise<Record<string, unknown>> =
   return root;
 };
 
+const readErrorSummary = async (response: Response): Promise<string> => {
+  const status = `${response.status}`;
+  let message = "";
+
+  try {
+    const payload = await response.text();
+    if (payload.trim().length > 0) {
+      try {
+        const parsed = JSON.parse(payload) as unknown;
+        const root = readObject(parsed);
+        const nested = readObject(root.data);
+        message =
+          getString(nested, ["message", "error"]) ??
+          getString(root, ["message", "error"]) ??
+          "";
+      } catch {
+        message = payload.trim();
+      }
+    }
+  } catch {
+    message = "";
+  }
+
+  if (message.length > 0) {
+    return `${status}: ${message}`;
+  }
+
+  return status;
+};
+
 export interface CreatedCharge {
   chargeId: string;
   invoice: string;
@@ -78,13 +203,13 @@ export const createCharge = async (
     },
     body: JSON.stringify({
       amount: input.amountSats * 1000,
-      amountMsat: input.amountSats * 1000,
-      internalDescription: input.resourcePath,
+      description: input.resourcePath,
     }),
   });
 
   if (!response.ok) {
-    throw new Error("Failed to create charge");
+    const summary = await readErrorSummary(response);
+    throw new Error(`ZBD API /v0/charges request failed (${summary})`);
   }
 
   const data = await parseJson(response);
@@ -94,7 +219,10 @@ export const createCharge = async (
   const invoice =
     getString(invoiceNode, ["request", "paymentRequest"]) ??
     getString(data, ["invoice", "paymentRequest"]);
-  const paymentHash = getString(data, ["paymentHash", "hash", "payment_hash"]);
+  const paymentHash =
+    getString(data, ["paymentHash", "hash", "payment_hash"]) ??
+    getString(invoiceNode, ["paymentHash", "hash", "payment_hash"]) ??
+    (invoice ? extractPaymentHashFromBolt11(invoice) : null);
   const expiresAt =
     getNumber(data, ["expiresAt", "expiration", "expires_at"]) ??
     Math.floor(Date.now() / 1000) + 300;
@@ -145,10 +273,17 @@ export const getCharge = async (input: {
   }
 
   const data = await parseJson(response);
+  const invoiceNode = readObject(data.invoice);
 
   const status = getString(data, ["status", "state"]);
   const paidAt = getString(data, ["paidAt", "paid_at"]);
-  const paymentHash = getString(data, ["paymentHash", "hash", "payment_hash"]);
+  const invoice =
+    getString(invoiceNode, ["request", "paymentRequest"]) ??
+    getString(data, ["invoice", "paymentRequest"]);
+  const paymentHash =
+    getString(data, ["paymentHash", "hash", "payment_hash"]) ??
+    getString(invoiceNode, ["paymentHash", "hash", "payment_hash"]) ??
+    (invoice ? extractPaymentHashFromBolt11(invoice) : null);
 
   if (!paymentHash) {
     throw new Error("Missing payment hash in charge response");

@@ -6,10 +6,15 @@ import os from "node:os";
 import path from "node:path";
 
 import { createExpressPaymentMiddleware } from "../dist/index.js";
+import { getCharge } from "../dist/zbd.js";
 
 const nowFuture = 4_102_444_800;
 
 const createPaymentHash = (preimage) => {
+  if (/^[0-9a-fA-F]{64}$/.test(preimage)) {
+    return crypto.createHash("sha256").update(Buffer.from(preimage, "hex")).digest("hex");
+  }
+
   return crypto.createHash("sha256").update(preimage, "utf8").digest("hex");
 };
 
@@ -168,6 +173,97 @@ test("happy path: challenge then valid proof forwards request", async () => {
   });
 });
 
+test("hex preimage proof is accepted", async () => {
+  const apiKey = "test-key";
+  const resource = "/protected-hex";
+  const amountSats = 100;
+  const preimage = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+  const paymentHash = createPaymentHash(preimage);
+  const tokenStorePath = await createTempTokenStorePath();
+
+  await withIsolatedFetch(async (url, options = {}) => {
+    if (url.toString().endsWith("/v0/charges") && options.method === "POST") {
+      return createMockResponse(200, {
+        data: {
+          id: "charge-hex",
+          invoice: { request: "lnbc-happy-hex" },
+          paymentHash,
+          expiresAt: nowFuture,
+        },
+      });
+    }
+
+    if (
+      url.toString().endsWith("/v0/charges/charge-hex") &&
+      (options.method === "GET" || options.method === undefined)
+    ) {
+      return createMockResponse(200, {
+        data: {
+          status: "completed",
+          paymentHash,
+        },
+      });
+    }
+
+    throw new Error(`Unexpected fetch call: ${url.toString()}`);
+  }, async () => {
+    const middleware = createExpressPaymentMiddleware({
+      amount: amountSats,
+      apiKey,
+      tokenStorePath,
+    });
+
+    const challenge = await runMiddleware(middleware, {
+      path: resource,
+      headers: {},
+    });
+
+    const granted = await runMiddleware(middleware, {
+      path: resource,
+      headers: {
+        authorization: `L402 ${challenge.body.macaroon}:${preimage}`,
+      },
+    });
+
+    assert.equal(granted.calledNext, true);
+    assert.equal(granted.statusCode, 0);
+  });
+});
+
+test("getCharge derives payment hash from invoice when hash field is missing", async () => {
+  const invoice =
+    "lnbc210n1p5el3hypp57vnlfdzp5rtq9y4kvyzzdeq3w3rek85yhkv8n8v2venxdhugsa6sdqs9ac8ymm5v43hgetycqzysxqzjcsp5kv8z2tr4h3aq4g06pnkh468xzf6f60s5dpv7zjnjhp0q90sx24lq9qxpqysgq8vrh4ea3rajhy6ulcpu4xm868h2aq3zeshawsm3fj3fljnrxdva37rctzsx740866ysuz47t8xxl6vn95jrrmldrw0mkt00flfs0cfqqfjgcl0";
+
+  await withIsolatedFetch(async (url, options = {}) => {
+    if (
+      url.toString().endsWith("/v0/charges/charge-derived-hash") &&
+      (options.method === "GET" || options.method === undefined)
+    ) {
+      return createMockResponse(200, {
+        data: {
+          status: "completed",
+          invoice: {
+            request: invoice,
+          },
+        },
+      });
+    }
+
+    throw new Error(`Unexpected fetch call: ${url.toString()}`);
+  }, async () => {
+    const result = await getCharge({
+      apiKey: "test-key",
+      chargeId: "charge-derived-hash",
+    });
+
+    assert.equal(result.settled, true);
+    assert.equal(
+      result.paymentHash,
+      "f327f4b441a0d60292b6610426e41174479b1e84bd98799d8a666666df888775",
+    );
+  });
+});
+
 test("invalid proof path returns 401 invalid_payment_proof", async () => {
   const apiKey = "test-key";
   const resource = "/proof-check";
@@ -211,6 +307,77 @@ test("invalid proof path returns 401 invalid_payment_proof", async () => {
     assert.equal(denied.statusCode, 401);
     assert.equal(denied.body.error.code, "invalid_payment_proof");
     assert.equal(denied.calledNext, false);
+  });
+});
+
+test("challenge creation failure includes upstream status details", async () => {
+  await withIsolatedFetch(async (url, options = {}) => {
+    if (url.toString().endsWith("/v0/charges") && options.method === "POST") {
+      return createMockResponse(403, {
+        success: false,
+        message: "Forbidden.",
+      });
+    }
+
+    throw new Error(`Unexpected fetch call: ${url.toString()}`);
+  }, async () => {
+    const middleware = createExpressPaymentMiddleware({
+      amount: 21,
+      apiKey: "test-key",
+      tokenStorePath: await createTempTokenStorePath(),
+    });
+
+    const denied = await runMiddleware(middleware, {
+      path: "/protected",
+      headers: {},
+    });
+
+    assert.equal(denied.statusCode, 502);
+    assert.equal(denied.body.error.code, "invoice_creation_failed");
+    assert.match(denied.body.error.message, /403/);
+  });
+});
+
+test("challenge creation uses description and derives payment hash from invoice", async () => {
+  const capturedBodies = [];
+
+  await withIsolatedFetch(async (url, options = {}) => {
+    if (url.toString().endsWith("/v0/charges") && options.method === "POST") {
+      const body = JSON.parse(String(options.body ?? "{}"));
+      capturedBodies.push(body);
+
+      return createMockResponse(200, {
+        data: {
+          id: "charge-derived-hash",
+          invoice: {
+            request:
+              "lnbc210n1p5el3napp5ppsqvgpsmw80j5tqr75fmzk3rku53wexjfvf8x4vn5uldh40kvfsdqc2pshjmt9de6zqun9w96k2um5cqzysxqzjcsp5rwwfzjnn6afda0dpy9475uxf3tdrkx6cjm6dmvdds9t3kffxrqtq9qxpqysgqxjj8pwv3qd02lmuwlp9anlkmn73x94xrt4zksh068ev7wgzmzhu35wvpu72u0dgathplmggux657m4e6a3qh8cqjpn0lqcawtfnvhxsqdgvtef",
+          },
+          expiresAt: nowFuture,
+        },
+      });
+    }
+
+    throw new Error(`Unexpected fetch call: ${url.toString()}`);
+  }, async () => {
+    const middleware = createExpressPaymentMiddleware({
+      amount: 100,
+      apiKey: "test-key",
+      tokenStorePath: await createTempTokenStorePath(),
+    });
+
+    const challenge = await runMiddleware(middleware, {
+      path: "/protected",
+      headers: {},
+    });
+
+    assert.equal(challenge.statusCode, 402);
+    assert.equal(challenge.body.error.code, "payment_required");
+    assert.match(challenge.body.paymentHash, /^[0-9a-f]{64}$/);
+    assert.equal(capturedBodies.length, 1);
+    assert.equal(capturedBodies[0].description, "/protected");
+    assert.equal(capturedBodies[0].amount, 100000);
+    assert.equal(capturedBodies[0].amountMsat, undefined);
   });
 });
 

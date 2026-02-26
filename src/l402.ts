@@ -114,5 +114,10 @@ export const parseAuthorizationHeader = (
 };
 
 export const createPaymentHash = (preimage: string): string => {
+  const isHexPreimage = /^[0-9a-fA-F]{64}$/.test(preimage);
+  if (isHexPreimage) {
+    return crypto.createHash("sha256").update(Buffer.from(preimage, "hex")).digest("hex");
+  }
+
   return crypto.createHash("sha256").update(preimage, "utf8").digest("hex");
 };
