@@ -2,6 +2,7 @@ export { AgentPayError, createConfigurationError } from "./errors.js";
 export { createPaymentMiddlewareFoundation } from "./core.js";
 export { createExpressPaymentMiddleware } from "./express.js";
 export { createHonoPaymentMiddleware } from "./hono.js";
+export { FileTokenStore } from "./token-store.js";
 
 export type {
   PaymentConfig,
@@ -10,6 +11,7 @@ export type {
   ResolvedPaymentConfig,
   PaymentErrorBody,
 } from "./types.js";
+export type { TokenStore } from "./token-store.js";
 
 export type {
   ExpressMiddleware,

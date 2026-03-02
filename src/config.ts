@@ -1,4 +1,5 @@
 import { createConfigurationError } from "./errors.js";
+import { FileTokenStore } from "./token-store.js";
 import type { PaymentConfig, ResolvedPaymentConfig } from "./types.js";
 import os from "node:os";
 import path from "node:path";
@@ -25,12 +26,18 @@ export const resolvePaymentConfig = <RequestLike>(
     throw createConfigurationError();
   }
 
+  const tokenStorePath =
+    config.tokenStorePath ??
+    (config.tokenStore
+      ? ""
+      : path.join(os.homedir(), ".zbd-wallet", "server-tokens.json"));
+  const tokenStore = config.tokenStore ?? new FileTokenStore(tokenStorePath);
+
   return {
     apiKey,
     amount: resolveAmount(config.amount),
     currency: config.currency ?? "SAT",
-    tokenStorePath:
-      config.tokenStorePath ??
-      path.join(os.homedir(), ".zbd-wallet", "server-tokens.json"),
+    tokenStorePath,
+    tokenStore,
   };
 };

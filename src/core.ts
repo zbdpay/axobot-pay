@@ -16,7 +16,6 @@ import {
   parseAuthorizationHeader,
   verifyMacaroon,
 } from "./l402.js";
-import { FileTokenStore } from "./token-store.js";
 import type { PaymentConfig, ResolvedPaymentConfig } from "./types.js";
 import { createCharge, getCharge } from "./zbd.js";
 
@@ -78,7 +77,7 @@ export const createPaymentMiddlewareFoundation = <RequestLike>(
   config: PaymentConfig<RequestLike>,
 ): PaymentMiddlewareFoundation<RequestLike> => {
   const resolvedConfig = resolvePaymentConfig(config);
-  const tokenStore = new FileTokenStore(resolvedConfig.tokenStorePath);
+  const tokenStore = resolvedConfig.tokenStore;
 
   const evaluateRequest: PaymentMiddlewareFoundation<RequestLike>["evaluateRequest"] =
     async (request, context) => {

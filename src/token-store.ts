@@ -10,6 +10,17 @@ interface SettledTokenRecord {
   verifiedAt: number;
 }
 
+export interface TokenStore {
+  isSettled(chargeId: string, paymentHash: string): Promise<boolean>;
+  markSettled(record: {
+    chargeId: string;
+    paymentHash: string;
+    amountSats: number;
+    expiresAt: number;
+    resource: string;
+  }): Promise<void>;
+}
+
 interface TokenStoreFile {
   settled: Record<string, SettledTokenRecord>;
 }
@@ -44,7 +55,7 @@ const writeStoreAtomic = async (
   await fs.rename(tempPath, filePath);
 };
 
-export class FileTokenStore {
+export class FileTokenStore implements TokenStore {
   private readonly filePath: string;
 
   constructor(filePath: string) {
@@ -61,7 +72,13 @@ export class FileTokenStore {
   }
 
   async markSettled(
-    record: Omit<SettledTokenRecord, "verifiedAt">,
+    record: {
+      chargeId: string;
+      paymentHash: string;
+      amountSats: number;
+      expiresAt: number;
+      resource: string;
+    },
   ): Promise<void> {
     const store = await readStore(this.filePath);
     store.settled[record.chargeId] = {
