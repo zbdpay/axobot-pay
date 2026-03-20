@@ -1,18 +1,19 @@
 {
-  "name": "@zbdpay/agent-pay",
+  "name": "@axobot/pay",
   "version": "1.0.2",
   "description": "L402 middleware foundation with Express, Hono, and Next adapters",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zbdpay/agent-pay.git"
+    "url": "git+https://github.com/zbdpay/axobot-pay.git"
   },
   "bugs": {
-    "url": "https://github.com/zbdpay/agent-pay/issues"
+    "url": "https://github.com/zbdpay/axobot-pay/issues"
   },
-  "homepage": "https://github.com/zbdpay/agent-pay#readme",
+  "homepage": "https://github.com/zbdpay/axobot-pay#readme",
   "keywords": [
-    "zbd",
+    "axo",
+    "axobot",
     "lightning",
     "l402",
     "middleware"
