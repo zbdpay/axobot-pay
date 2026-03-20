@@ -1,11 +1,12 @@
-# @zbdpay/agent-pay
+# @axobot/pay
 
-Framework adapters and core logic for L402 payment-gated HTTP routes.
+Framework adapters and core logic for L402 and x402 payment-gated HTTP routes.
 
 Supports:
 - Express middleware
 - Hono middleware
-- Next.js route wrapper (`@zbdpay/agent-pay/next`)
+- Next.js route wrapper (`@axobot/pay/next`)
+- x402 / USDC challenge mode
 
 Want to run this immediately? See [Examples (Fastest Way to Run)](#examples-fastest-way-to-run).
 
@@ -17,7 +18,7 @@ Want to run this immediately? See [Examples (Fastest Way to Run)](#examples-fast
 ## Install
 
 ```bash
-npm install @zbdpay/agent-pay
+npm install @axobot/pay
 ```
 
 ## Quick Start
@@ -26,7 +27,7 @@ npm install @zbdpay/agent-pay
 
 ```ts
 import express from "express";
-import { createExpressPaymentMiddleware } from "@zbdpay/agent-pay";
+import { createExpressPaymentMiddleware } from "@axobot/pay";
 
 const app = express();
 
@@ -46,7 +47,7 @@ app.get(
 
 ```ts
 import { Hono } from "hono";
-import { createHonoPaymentMiddleware } from "@zbdpay/agent-pay";
+import { createHonoPaymentMiddleware } from "@axobot/pay";
 
 const app = new Hono();
 
@@ -62,7 +63,7 @@ app.use(
 ### Next.js Route Handlers
 
 ```ts
-import { withPaymentRequired } from "@zbdpay/agent-pay/next";
+import { withPaymentRequired } from "@axobot/pay/next";
 
 export const GET = withPaymentRequired(
   {
@@ -76,14 +77,34 @@ export const GET = withPaymentRequired(
 ## Config (`PaymentConfig`)
 
 - `amount`: number or async resolver function
-- `currency`: `"SAT" | "USD"` (default `"SAT"`)
+- `currency`: `"SAT" | "USD" | "USDC"` (default `"SAT"`)
 - `apiKey`: optional, falls back to `ZBD_API_KEY`
+- `usdcProviderUrl`: optional, falls back to `USDC_PROVIDER_URL` when `currency` is `USDC`
+- `usdcProviderApiKey`: optional, falls back to `USDC_PROVIDER_API_KEY` when `currency` is `USDC`
 - `tokenStorePath`: optional, defaults to `~/.zbd-wallet/server-tokens.json`
 
 ## Runtime Environment
 
 - `ZBD_API_KEY`: required unless passed via config
 - `ZBD_API_BASE_URL`: optional, default `https://api.zbdpay.com`
+- `USDC_PROVIDER_URL`: required for `currency: "USDC"` unless passed via config
+- `USDC_PROVIDER_API_KEY`: required for `currency: "USDC"` unless passed via config
+
+## x402 / USDC Flow
+
+When `currency: "USDC"` is configured, the middleware:
+
+1. Resolves the BTC/USD rate
+2. Requests an x402 payment requirement from the configured USDC provider
+3. Returns HTTP 402 with an `x402Version` challenge body
+4. Accepts verified `x-payment` proofs via the provider verification endpoint
+
+The public helpers for this mode are exported from `@axobot/pay`:
+
+- `createX402Charge`
+- `getBtcUsdRate`
+- `satsToUsdcAmount`
+- `verifyX402Payment`
 
 ## Examples (Fastest Way to Run)
 
@@ -107,7 +128,7 @@ ZBD_PAY_DEBUG=1 ZBD_API_KEY=<your_api_key> npm run example:http-server
 In a second terminal, consume the paid route with your local wallet CLI:
 
 ```bash
-zbdw fetch "http://localhost:8787/protected" --max-sats 100
+axo fetch "http://localhost:8787/protected" --max-sats 100
 ```
 
 ## L402 Flow
@@ -148,13 +169,17 @@ Main package:
 - `createExpressPaymentMiddleware`
 - `createHonoPaymentMiddleware`
 - `createPaymentMiddlewareFoundation`
+- `createX402Charge`
+- `getBtcUsdRate`
+- `satsToUsdcAmount`
+- `verifyX402Payment`
 - `AgentPayError`
 - `createConfigurationError`
 - related TS types
 
 Subpath export:
 
-- `@zbdpay/agent-pay/next` -> `withPaymentRequired`
+- `@axobot/pay/next` -> `withPaymentRequired`
 
 ## Scripts
 

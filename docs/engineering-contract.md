@@ -1,7 +1,7 @@
-# Engineering Contract — `@zbdpay/agent-pay`
+# Engineering Contract — `@axobot/pay`
 
 > **Status**: Normative. All implementation work in this repository must conform to every rule in this document.
-> **Scope**: Server-side L402 middleware for Express, Next.js, and Hono. Issues 402 challenges via ZBD, verifies macaroon/preimage proofs, and gates handler execution behind confirmed Lightning payments.
+> **Scope**: Server-side L402 middleware for Express, Next.js, and Hono, plus x402/USDC middleware helpers. Issues 402 challenges via ZBD or the configured USDC provider, verifies macaroon/preimage or x-payment proofs, and gates handler execution behind confirmed payments.
 
 ---
 
@@ -129,20 +129,32 @@ The npm package provenance attestation (`--provenance` flag) MUST be enabled on 
 
 The package exposes framework-specific entry points:
 
-- `@zbdpay/agent-pay` — Express / Hono middleware
-- `@zbdpay/agent-pay/next` — Next.js App Router handler wrapper
+- `@axobot/pay` — Express / Hono middleware
+- `@axobot/pay/next` — Next.js App Router handler wrapper
 
 Both entry points are declared in `package.json` `exports`. Adding a new entry point is a minor version change. Removing or renaming an existing entry point is a major version change.
 
-### 3.4 Release Branch
+### 3.4 x402 / USDC Helpers
+
+When `PaymentConfig.currency` is set to `USDC`, the middleware MUST resolve a BTC/USD rate, request a charge requirement from the configured USDC provider, and return HTTP 402 with a JSON body containing:
+
+- `x402Version`
+- `accepts`
+- `resource`
+
+The provider URL and API key MUST be read from config first and then from `USDC_PROVIDER_URL` and `USDC_PROVIDER_API_KEY`. If either value is missing, the middleware MUST fail closed with a configuration error.
+
+If the request includes an `x-payment` header, the middleware MUST send it to the configured provider verification endpoint before allowing the request.
+
+### 3.5 Release Branch
 
 The `main` branch is the only release branch.
 
-### 3.5 Changelog
+### 3.6 Changelog
 
 `semantic-release` generates `CHANGELOG.md` automatically. Manual edits are forbidden.
 
-### 3.6 No Manual Publishes
+### 3.7 No Manual Publishes
 
 Publishing by running `npm publish` locally is forbidden.
 

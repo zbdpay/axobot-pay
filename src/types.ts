@@ -1,6 +1,6 @@
 import type { TokenStore } from "./token-store.js";
 
-export type PaymentCurrency = "SAT" | "USD";
+export type PaymentCurrency = "SAT" | "USD" | "USDC";
 
 export type PaymentAmount<RequestLike> =
   | number
@@ -10,6 +10,8 @@ export interface PaymentConfig<RequestLike = unknown> {
   amount: PaymentAmount<RequestLike>;
   currency?: PaymentCurrency;
   apiKey?: string;
+  usdcProviderUrl?: string;
+  usdcProviderApiKey?: string;
   tokenStorePath?: string;
   tokenStore?: TokenStore;
 }
@@ -18,6 +20,8 @@ export interface ResolvedPaymentConfig<RequestLike = unknown> {
   amount: (request: RequestLike) => Promise<number>;
   currency: PaymentCurrency;
   apiKey: string;
+  usdcProviderUrl?: string;
+  usdcProviderApiKey?: string;
   tokenStorePath: string;
   tokenStore: TokenStore;
 }

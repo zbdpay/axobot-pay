@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
-const root = await import("@zbdpay/agent-pay");
-const next = await import("@zbdpay/agent-pay/next");
+const root = await import("@axobot/pay");
+const next = await import("@axobot/pay/next");
 
 const previousFetch = globalThis.fetch;
 globalThis.fetch = async () => {
@@ -26,6 +26,10 @@ try {
 assert.equal(typeof root.createExpressPaymentMiddleware, "function");
 assert.equal(typeof root.createHonoPaymentMiddleware, "function");
 assert.equal(typeof root.createPaymentMiddlewareFoundation, "function");
+assert.equal(typeof root.createX402Charge, "function");
+assert.equal(typeof root.getBtcUsdRate, "function");
+assert.equal(typeof root.satsToUsdcAmount, "function");
+assert.equal(typeof root.verifyX402Payment, "function");
 assert.equal(typeof next.withPaymentRequired, "function");
 
 const express = root.createExpressPaymentMiddleware({

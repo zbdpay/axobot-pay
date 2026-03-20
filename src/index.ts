@@ -3,6 +3,7 @@ export { createPaymentMiddlewareFoundation } from "./core.js";
 export { createExpressPaymentMiddleware } from "./express.js";
 export { createHonoPaymentMiddleware } from "./hono.js";
 export { FileTokenStore } from "./token-store.js";
+export { createX402Charge, getBtcUsdRate, satsToUsdcAmount, verifyX402Payment } from "./x402.js";
 
 export type {
   PaymentConfig,
@@ -11,6 +12,7 @@ export type {
   ResolvedPaymentConfig,
   PaymentErrorBody,
 } from "./types.js";
+export type { X402PaymentRequirement } from "./x402.js";
 export type { TokenStore } from "./token-store.js";
 
 export type {
