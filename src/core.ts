@@ -647,6 +647,7 @@ export const createPaymentMiddlewareFoundation = <RequestLike>(
         resource: storedChallenge.resource,
         realm: storedChallenge.realm,
         paymentHash: storedChallenge.paymentHash,
+        bearerSecret: credential.payload.preimage,
         chargeId: storedChallenge.chargeId,
         status: "open",
         unitAmountSats: amountSats,

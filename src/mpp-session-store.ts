@@ -13,6 +13,7 @@ export interface StoredMppSession {
   resource: string;
   realm: string;
   paymentHash: string;
+  bearerSecret: string | null;
   chargeId: string;
   status: StoredMppSessionStatus;
   unitAmountSats: number;
