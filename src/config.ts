@@ -37,6 +37,7 @@ export const resolvePaymentConfig = <RequestLike>(
     apiKey,
     amount: resolveAmount(config.amount),
     currency: config.currency ?? "SAT",
+    protocol: config.protocol ?? "L402",
     tokenStorePath,
     tokenStore,
   };

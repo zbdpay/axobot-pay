@@ -9,6 +9,7 @@ export type {
   PaymentConfig,
   PaymentCurrency,
   PaymentAmount,
+  PaymentProtocol,
   ResolvedPaymentConfig,
   PaymentErrorBody,
 } from "./types.js";

@@ -1,6 +1,7 @@
 import type { TokenStore } from "./token-store.js";
 
 export type PaymentCurrency = "SAT" | "USD" | "USDC";
+export type PaymentProtocol = "L402" | "MPP";
 
 export type PaymentAmount<RequestLike> =
   | number
@@ -9,6 +10,7 @@ export type PaymentAmount<RequestLike> =
 export interface PaymentConfig<RequestLike = unknown> {
   amount: PaymentAmount<RequestLike>;
   currency?: PaymentCurrency;
+  protocol?: PaymentProtocol;
   apiKey?: string;
   usdcProviderUrl?: string;
   usdcProviderApiKey?: string;
@@ -19,6 +21,7 @@ export interface PaymentConfig<RequestLike = unknown> {
 export interface ResolvedPaymentConfig<RequestLike = unknown> {
   amount: (request: RequestLike) => Promise<number>;
   currency: PaymentCurrency;
+  protocol: PaymentProtocol;
   apiKey: string;
   usdcProviderUrl?: string;
   usdcProviderApiKey?: string;
