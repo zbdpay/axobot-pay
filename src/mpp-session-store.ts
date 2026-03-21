@@ -33,6 +33,7 @@ export interface StoredMppSession {
 
 export interface StoredMppChallenge {
   id: string;
+  sessionId?: string | undefined;
   intent: "charge" | "session";
   realm: string;
   request: string;

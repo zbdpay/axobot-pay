@@ -531,6 +531,7 @@ export const createPaymentMiddlewareFoundation = <RequestLike>(
 
       await mppSessionStore.saveChallenge({
         id: challengeId,
+        sessionId: input.sessionId,
         intent: "session",
         realm,
         request: requestToken,
