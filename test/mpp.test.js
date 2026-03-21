@@ -109,11 +109,13 @@ test("MPP protocol issues a Payment challenge and accepts a valid credential", a
 
     throw new Error(`Unexpected fetch call: ${url.toString()}`);
   }, async () => {
+    const sessionStorePath = path.join(path.dirname(tokenStorePath), "mpp-charge-sessions.json");
     const middleware = createExpressPaymentMiddleware({
       amount: amountSats,
       apiKey,
       protocol: "MPP",
       tokenStorePath,
+      mppSessionStorePath: sessionStorePath,
     });
 
     const challengeResponse = await runMiddleware(middleware, {
@@ -143,5 +145,230 @@ test("MPP protocol issues a Payment challenge and accepts a valid credential", a
 
     assert.equal(granted.calledNext, true);
     assert.equal(granted.statusCode, 0);
+  });
+});
+
+test("MPP session supports open, bearer, top-up, and close with Lightning Address refunds", async () => {
+  const apiKey = "test-key";
+  const resource = "/mpp-session";
+  const amountSats = 50;
+  const tokenStorePath = await createTempTokenStorePath();
+  const sessionStorePath = path.join(path.dirname(tokenStorePath), "mpp-sessions.json");
+
+  const openPreimage = "bb".repeat(32);
+  const openPaymentHash = crypto
+    .createHash("sha256")
+    .update(Buffer.from(openPreimage, "hex"))
+    .digest("hex");
+
+  const topUpPreimage = "cc".repeat(32);
+  const topUpPaymentHash = crypto
+    .createHash("sha256")
+    .update(Buffer.from(topUpPreimage, "hex"))
+    .digest("hex");
+
+  const refundPreimage = "dd".repeat(32);
+  const refundPaymentHash = crypto
+    .createHash("sha256")
+    .update(Buffer.from(refundPreimage, "hex"))
+    .digest("hex");
+
+  const createdCharges = [
+    {
+      id: "charge-open",
+      invoice: { request: "lnbc-open" },
+      paymentHash: openPaymentHash,
+      expiresAt: nowFuture,
+    },
+    {
+      id: "charge-topup",
+      invoice: { request: "lnbc-topup" },
+      paymentHash: topUpPaymentHash,
+      expiresAt: nowFuture,
+    },
+    {
+      id: "charge-close",
+      invoice: { request: "lnbc-close" },
+      paymentHash: "ee".repeat(32),
+      expiresAt: nowFuture,
+    },
+  ];
+
+  await withIsolatedFetch(async (url, options = {}) => {
+    if (url.toString().endsWith("/v0/charges") && options.method === "POST") {
+      const nextCharge = createdCharges.shift();
+      if (!nextCharge) {
+        throw new Error("Unexpected charge creation");
+      }
+      return createMockResponse(200, {
+        data: nextCharge,
+      });
+    }
+
+    if (
+      url.toString().endsWith("/v0/charges/charge-open") &&
+      (options.method === "GET" || options.method === undefined)
+    ) {
+      return createMockResponse(200, {
+        data: {
+          status: "completed",
+          paymentHash: openPaymentHash,
+        },
+      });
+    }
+
+    if (
+      url.toString().endsWith("/v0/charges/charge-topup") &&
+      (options.method === "GET" || options.method === undefined)
+    ) {
+      return createMockResponse(200, {
+        data: {
+          status: "completed",
+          paymentHash: topUpPaymentHash,
+        },
+      });
+    }
+
+    if (
+      url.toString().endsWith("/v0/ln-address/send-payment") &&
+      options.method === "POST"
+    ) {
+      return createMockResponse(200, {
+        data: {
+          id: "refund-payment",
+          paymentHash: refundPaymentHash,
+          preimage: refundPreimage,
+          amountSats: 50,
+        },
+      });
+    }
+
+    throw new Error(`Unexpected fetch call: ${url.toString()}`);
+  }, async () => {
+    const middleware = createExpressPaymentMiddleware({
+      amount: amountSats,
+      apiKey,
+      protocol: "MPP",
+      mppIntent: "session",
+      mppDepositMultiplier: 2,
+      tokenStorePath,
+      mppSessionStorePath: sessionStorePath,
+    });
+
+    const initialChallenge = await runMiddleware(middleware, {
+      path: resource,
+      headers: {
+        host: "api.example.com",
+      },
+    });
+
+    assert.equal(initialChallenge.statusCode, 402);
+    assert.equal(initialChallenge.body.paymentChallenge.intent, "session");
+    assert.equal(initialChallenge.body.depositSats, 100);
+
+    const sessionId = initialChallenge.body.paymentHash;
+    const openCredential = encodePaymentCredential({
+      challenge: initialChallenge.body.paymentChallenge,
+      payload: {
+        action: "open",
+        preimage: openPreimage,
+        returnLightningAddress: "agent@axo.bot",
+      },
+    });
+
+    const opened = await runMiddleware(middleware, {
+      path: resource,
+      headers: {
+        authorization: `Payment ${openCredential}`,
+        host: "api.example.com",
+      },
+    });
+
+    assert.equal(opened.calledNext, true);
+
+    const bearerCredential = encodePaymentCredential({
+      challenge: initialChallenge.body.paymentChallenge,
+      payload: {
+        action: "bearer",
+        sessionId,
+        preimage: openPreimage,
+      },
+    });
+
+    const firstBearer = await runMiddleware(middleware, {
+      path: resource,
+      headers: {
+        authorization: `Payment ${bearerCredential}`,
+        host: "api.example.com",
+      },
+    });
+
+    assert.equal(firstBearer.calledNext, true);
+
+    const exhausted = await runMiddleware(middleware, {
+      path: resource,
+      headers: {
+        authorization: `Payment ${bearerCredential}`,
+        host: "api.example.com",
+      },
+    });
+
+    assert.equal(exhausted.statusCode, 402);
+    assert.equal(exhausted.body.paymentChallenge.intent, "session");
+    assert.equal(exhausted.body.reason, "insufficient_balance");
+    assert.equal(exhausted.body.sessionId, sessionId);
+
+    const topUpCredential = encodePaymentCredential({
+      challenge: exhausted.body.paymentChallenge,
+      payload: {
+        action: "topUp",
+        sessionId,
+        topUpPreimage,
+      },
+    });
+
+    const toppedUp = await runMiddleware(middleware, {
+      path: resource,
+      headers: {
+        authorization: `Payment ${topUpCredential}`,
+        host: "api.example.com",
+      },
+    });
+
+    assert.equal(toppedUp.calledNext, true);
+
+    const closeChallenge = await runMiddleware(middleware, {
+      path: resource,
+      headers: {
+        host: "api.example.com",
+      },
+    });
+
+    assert.equal(closeChallenge.statusCode, 402);
+    assert.equal(closeChallenge.body.paymentChallenge.intent, "session");
+
+    const closeCredential = encodePaymentCredential({
+      challenge: closeChallenge.body.paymentChallenge,
+      payload: {
+        action: "close",
+        sessionId,
+        preimage: openPreimage,
+      },
+    });
+
+    const closed = await runMiddleware(middleware, {
+      path: resource,
+      headers: {
+        authorization: `Payment ${closeCredential}`,
+        host: "api.example.com",
+      },
+    });
+
+    assert.equal(closed.calledNext, false);
+    assert.equal(closed.statusCode, 200);
+    assert.equal(closed.body.status, "closed");
+    assert.equal(closed.body.refundedSats, 50);
+    assert.equal(closed.body.refundStatus, "succeeded");
+    assert.equal(closed.body.refundReference, "refund-payment");
   });
 });

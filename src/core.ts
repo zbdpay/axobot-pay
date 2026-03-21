@@ -1,7 +1,12 @@
 import {
+  createZbdLightningAdapter,
   decodePaymentCredential,
+  decodeLightningSessionRequest,
   encodePaymentRequest,
+  refundLightningSessionBalance,
   type LightningChargeCredentialPayload,
+  type LightningSessionCredentialPayload,
+  type PaymentChallengeContext,
 } from "@axobot/mppx";
 import crypto from "node:crypto";
 import { resolvePaymentConfig } from "./config.js";
@@ -22,7 +27,10 @@ import {
   parseAuthorizationHeader,
   verifyMacaroon,
 } from "./l402.js";
-import type { PaymentConfig, ResolvedPaymentConfig } from "./types.js";
+import type {
+  PaymentConfig,
+  ResolvedPaymentConfig,
+} from "./types.js";
 import {
   createX402Charge,
   getBtcUsdRate,
@@ -61,22 +69,35 @@ export interface X402ChallengeBody {
   resource: string;
 }
 
-export interface MppChallengeBody {
+type MppChallengeContext = PaymentChallengeContext & {
+  method: "lightning";
+  intent: "charge" | "session";
+};
+
+export interface MppChargeChallengeBody {
   error: {
     code: "payment_required";
     message: string;
   };
-  paymentChallenge: {
-    id: string;
-    realm: string;
-    method: "lightning";
-    intent: "charge";
-    request: string;
-    expires: string;
-  };
+  paymentChallenge: MppChallengeContext;
   invoice: string;
   paymentHash: string;
   amountSats: number;
+}
+
+export interface MppSessionChallengeBody {
+  error: {
+    code: "payment_required";
+    message: string;
+  };
+  paymentChallenge: MppChallengeContext;
+  depositInvoice: string;
+  paymentHash: string;
+  amountSats: number;
+  depositSats: number;
+  idleTimeoutSeconds: number;
+  sessionId?: string | undefined;
+  reason?: "new_session" | "insufficient_balance" | "session_idle" | undefined;
 }
 
 export type PaymentDecision =
@@ -85,6 +106,12 @@ export type PaymentDecision =
     }
   | {
       type: "deny";
+      status: number;
+      body: unknown;
+      headers?: Record<string, string>;
+    }
+  | {
+      type: "respond";
       status: number;
       body: unknown;
       headers?: Record<string, string>;
@@ -101,6 +128,30 @@ const denyFromError = (error: AgentPayError): PaymentDecision => {
 const createPaymentRequiredBody = (
   challenge: Omit<PaymentChallengeBody, "error">,
 ): PaymentChallengeBody => {
+  return {
+    error: {
+      code: "payment_required",
+      message: "Payment required",
+    },
+    ...challenge,
+  };
+};
+
+const createMppChargeBody = (
+  challenge: Omit<MppChargeChallengeBody, "error">,
+): MppChargeChallengeBody => {
+  return {
+    error: {
+      code: "payment_required",
+      message: "Payment required",
+    },
+    ...challenge,
+  };
+};
+
+const createMppSessionBody = (
+  challenge: Omit<MppSessionChallengeBody, "error">,
+): MppSessionChallengeBody => {
   return {
     error: {
       code: "payment_required",
@@ -179,16 +230,6 @@ const createX402PaymentRequiredBody = (
   };
 };
 
-const createMppPaymentRequiredBody = (challenge: Omit<MppChallengeBody, "error">): MppChallengeBody => {
-  return {
-    error: {
-      code: "payment_required",
-      message: "Payment required",
-    },
-    ...challenge,
-  };
-};
-
 const readHostHeader = (request: unknown): string | undefined => {
   if (!request || typeof request !== "object") {
     return undefined;
@@ -258,30 +299,575 @@ const readPaymentAuthorizationToken = (
   return tokenRaw;
 };
 
+const createMppAuthenticateHeader = (challenge: MppChallengeContext): string => {
+  return `Payment id="${challenge.id}", realm="${challenge.realm}", method="${challenge.method}", intent="${challenge.intent}", request="${challenge.request}", expires="${challenge.expires ?? ""}"`;
+};
+
+const calculateDepositSats = (amountSats: number, multiplier: number): number => {
+  return Math.max(amountSats, Math.ceil(amountSats * multiplier));
+};
+
+const extendIdleTimeout = (nowMs: number, idleTimeoutSeconds: number): string => {
+  return new Date(nowMs + idleTimeoutSeconds * 1000).toISOString();
+};
+
+const isIsoExpired = (value: string | undefined | null, nowMs: number): boolean => {
+  if (!value) {
+    return false;
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    return false;
+  }
+  return parsed <= nowMs;
+};
+
+const buildSessionCloseBody = (input: {
+  sessionId: string;
+  status: "closed" | "refund_failed";
+  refundedSats: number;
+  refundStatus: "pending" | "succeeded" | "failed" | "skipped";
+  refundReference?: string | null | undefined;
+}): Record<string, unknown> => {
+  return {
+    sessionId: input.sessionId,
+    status: input.status,
+    refundedSats: input.refundedSats,
+    refundStatus: input.refundStatus,
+    refundReference: input.refundReference ?? null,
+  };
+};
+
 export const createPaymentMiddlewareFoundation = <RequestLike>(
   config: PaymentConfig<RequestLike>,
 ): PaymentMiddlewareFoundation<RequestLike> => {
   const resolvedConfig = resolvePaymentConfig(config);
   const tokenStore = resolvedConfig.tokenStore;
-  const mppChargeChallenges = new Map<
-    string,
-    {
-      chargeId: string;
-      paymentHash: string;
-      amountSats: number;
-      resource: string;
-      expiresAt: number;
-      challenge: {
-        id: string;
-        realm: string;
-        method: "lightning";
-        intent: "charge";
-        request: string;
-        expires: string;
-      };
-      consumed: boolean;
+  const mppSessionStore = resolvedConfig.mppSessionStore;
+
+  const ensureMppChallengeMatches = async (
+    challenge: PaymentChallengeContext,
+    amountSats: number,
+    resourcePath: string,
+    options?: { requireUnconsumed?: boolean | undefined },
+  ) => {
+    const stored = await mppSessionStore.getChallenge(challenge.id);
+    if (!stored) {
+      throw createInvalidCredentialError();
     }
-  >();
+
+    if (options?.requireUnconsumed !== false && stored.consumed) {
+      throw createInvalidCredentialError();
+    }
+
+    const expectedExpires = new Date(stored.expiresAt * 1000).toISOString();
+    if (
+      challenge.id !== stored.id ||
+      challenge.realm !== stored.realm ||
+      challenge.method !== "lightning" ||
+      challenge.intent !== stored.intent ||
+      challenge.request !== stored.request ||
+      (challenge.expires ?? "") !== expectedExpires
+    ) {
+      throw createInvalidCredentialError();
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    if (stored.expiresAt <= now) {
+      throw createTokenExpiredError();
+    }
+
+    if (stored.resource !== resourcePath) {
+      throw createResourceMismatchError();
+    }
+
+    if (stored.amountSats !== amountSats) {
+      throw createAmountMismatchError();
+    }
+
+    return stored;
+  };
+
+  const ensureChargeSettled = async (input: {
+    chargeId: string;
+    paymentHash: string;
+    amountSats: number;
+    expiresAt: number;
+    resource: string;
+  }): Promise<void> => {
+    const settledFromStore = await tokenStore.isSettled(input.chargeId, input.paymentHash);
+    if (!settledFromStore) {
+      const charge = await getCharge({
+        apiKey: resolvedConfig.apiKey,
+        chargeId: input.chargeId,
+      });
+
+      if (!charge.settled || charge.paymentHash !== input.paymentHash) {
+        throw createInvalidPaymentProofError();
+      }
+
+      await tokenStore.markSettled({
+        chargeId: input.chargeId,
+        paymentHash: input.paymentHash,
+        amountSats: input.amountSats,
+        expiresAt: input.expiresAt,
+        resource: input.resource,
+      });
+    }
+  };
+
+  const issueMppChargeChallenge = async (input: {
+    request: RequestLike;
+    resourcePath: string;
+    amountSats: number;
+  }): Promise<PaymentDecision> => {
+    try {
+      const challenge = await createCharge({
+        apiKey: resolvedConfig.apiKey,
+        amountSats: input.amountSats,
+        resourcePath: input.resourcePath,
+      });
+
+      const challengeId = crypto.randomUUID();
+      const realm = resolveRequestRealm(input.request);
+      const expires = new Date(challenge.expiresAt * 1000).toISOString();
+      const requestToken = encodePaymentRequest({
+        amount: String(input.amountSats),
+        currency: "sat",
+        description: input.resourcePath,
+        methodDetails: {
+          invoice: challenge.invoice,
+          paymentHash: challenge.paymentHash,
+          network: "mainnet",
+        },
+      });
+
+      const paymentChallenge: MppChallengeContext = {
+        id: challengeId,
+        realm,
+        method: "lightning",
+        intent: "charge",
+        request: requestToken,
+        expires,
+      };
+
+      await mppSessionStore.saveChallenge({
+        id: challengeId,
+        intent: "charge",
+        realm,
+        request: requestToken,
+        resource: input.resourcePath,
+        paymentHash: challenge.paymentHash,
+        chargeId: challenge.chargeId,
+        amountSats: input.amountSats,
+        depositSats: input.amountSats,
+        expiresAt: challenge.expiresAt,
+        consumed: false,
+      });
+
+      return {
+        type: "deny",
+        status: createPaymentRequiredError().status,
+        headers: {
+          "WWW-Authenticate": createMppAuthenticateHeader(paymentChallenge),
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+        },
+        body: createMppChargeBody({
+          paymentChallenge,
+          invoice: challenge.invoice,
+          paymentHash: challenge.paymentHash,
+          amountSats: input.amountSats,
+        }),
+      };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : undefined;
+      return denyFromError(createInvoiceCreationFailedError(reason));
+    }
+  };
+
+  const issueMppSessionChallenge = async (input: {
+    request: RequestLike;
+    resourcePath: string;
+    amountSats: number;
+    sessionId?: string | undefined;
+    reason?: "new_session" | "insufficient_balance" | "session_idle" | undefined;
+  }): Promise<PaymentDecision> => {
+    try {
+      const depositSats = calculateDepositSats(
+        input.amountSats,
+        resolvedConfig.mppDepositMultiplier,
+      );
+      const challenge = await createCharge({
+        apiKey: resolvedConfig.apiKey,
+        amountSats: depositSats,
+        resourcePath: input.resourcePath,
+      });
+
+      const challengeId = crypto.randomUUID();
+      const realm = resolveRequestRealm(input.request);
+      const expires = new Date(challenge.expiresAt * 1000).toISOString();
+      const requestToken = encodePaymentRequest({
+        amount: String(input.amountSats),
+        currency: "sat",
+        description: input.resourcePath,
+        unitType: resolvedConfig.mppUnitType ?? undefined,
+        methodDetails: {
+          depositInvoice: challenge.invoice,
+          paymentHash: challenge.paymentHash,
+          depositAmount: String(depositSats),
+          idleTimeout: String(resolvedConfig.mppIdleTimeoutSeconds),
+        },
+      });
+
+      const paymentChallenge: MppChallengeContext = {
+        id: challengeId,
+        realm,
+        method: "lightning",
+        intent: "session",
+        request: requestToken,
+        expires,
+      };
+
+      await mppSessionStore.saveChallenge({
+        id: challengeId,
+        intent: "session",
+        realm,
+        request: requestToken,
+        resource: input.resourcePath,
+        paymentHash: challenge.paymentHash,
+        chargeId: challenge.chargeId,
+        amountSats: input.amountSats,
+        depositSats,
+        expiresAt: challenge.expiresAt,
+        consumed: false,
+      });
+
+      return {
+        type: "deny",
+        status: createPaymentRequiredError().status,
+        headers: {
+          "WWW-Authenticate": createMppAuthenticateHeader(paymentChallenge),
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+        },
+        body: createMppSessionBody({
+          paymentChallenge,
+          depositInvoice: challenge.invoice,
+          paymentHash: challenge.paymentHash,
+          amountSats: input.amountSats,
+          depositSats,
+          idleTimeoutSeconds: resolvedConfig.mppIdleTimeoutSeconds,
+          sessionId: input.sessionId,
+          reason: input.reason,
+        }),
+      };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : undefined;
+      return denyFromError(createInvoiceCreationFailedError(reason));
+    }
+  };
+
+  const handleMppChargeCredential = async (
+    credential: {
+      challenge: PaymentChallengeContext;
+      payload: LightningChargeCredentialPayload;
+    },
+    amountSats: number,
+    resourcePath: string,
+  ): Promise<PaymentDecision> => {
+    const stored = await ensureMppChallengeMatches(credential.challenge, amountSats, resourcePath, {
+      requireUnconsumed: true,
+    });
+
+    const computedHash = createPaymentHash(credential.payload.preimage);
+    if (computedHash !== stored.paymentHash) {
+      throw createInvalidPaymentProofError();
+    }
+
+    await ensureChargeSettled({
+      chargeId: stored.chargeId,
+      paymentHash: stored.paymentHash,
+      amountSats: stored.amountSats,
+      expiresAt: stored.expiresAt,
+      resource: stored.resource,
+    });
+
+    await mppSessionStore.saveChallenge({
+      ...stored,
+      consumed: true,
+    });
+
+    return {
+      type: "allow",
+    };
+  };
+
+  const handleMppSessionCredential = async (
+    request: RequestLike,
+    credential: {
+      challenge: PaymentChallengeContext;
+      payload: LightningSessionCredentialPayload;
+    },
+    amountSats: number,
+    resourcePath: string,
+  ): Promise<PaymentDecision> => {
+    const storedChallenge = await ensureMppChallengeMatches(
+      credential.challenge,
+      amountSats,
+      resourcePath,
+      {
+        requireUnconsumed:
+          credential.payload.action === "open" || credential.payload.action === "topUp",
+      },
+    );
+    const action = credential.payload.action;
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+
+    if (action === "open") {
+      const computedHash = createPaymentHash(credential.payload.preimage);
+      if (computedHash !== storedChallenge.paymentHash) {
+        throw createInvalidPaymentProofError();
+      }
+
+      await ensureChargeSettled({
+        chargeId: storedChallenge.chargeId,
+        paymentHash: storedChallenge.paymentHash,
+        amountSats: storedChallenge.depositSats,
+        expiresAt: storedChallenge.expiresAt,
+        resource: storedChallenge.resource,
+      });
+
+      const sessionRequest = decodeLightningSessionRequest(credential.challenge);
+      const sessionId = sessionRequest.methodDetails.paymentHash;
+
+      await mppSessionStore.saveSession({
+        sessionId,
+        resource: storedChallenge.resource,
+        realm: storedChallenge.realm,
+        paymentHash: storedChallenge.paymentHash,
+        chargeId: storedChallenge.chargeId,
+        status: "open",
+        unitAmountSats: amountSats,
+        unitType: resolvedConfig.mppUnitType,
+        depositSats: storedChallenge.depositSats,
+        spentSats: amountSats,
+        returnInvoice: credential.payload.returnInvoice ?? null,
+        returnLightningAddress: credential.payload.returnLightningAddress ?? null,
+        openedAt: nowIso,
+        lastActivityAt: nowIso,
+        idleTimeoutAt: extendIdleTimeout(nowMs, resolvedConfig.mppIdleTimeoutSeconds),
+        closedAt: null,
+        refundSats: null,
+        refundStatus: null,
+        refundReference: null,
+      });
+
+      await mppSessionStore.saveChallenge({
+        ...storedChallenge,
+        consumed: true,
+      });
+
+      return {
+        type: "allow",
+      };
+    }
+
+    const session = await mppSessionStore.getSession(credential.payload.sessionId);
+    if (!session) {
+      throw createInvalidCredentialError();
+    }
+
+    if (session.resource !== resourcePath) {
+      throw createResourceMismatchError();
+    }
+
+    if (action === "bearer") {
+      if (session.status !== "open") {
+        throw createInvalidCredentialError();
+      }
+
+      if (isIsoExpired(session.idleTimeoutAt, nowMs)) {
+        await mppSessionStore.saveSession({
+          ...session,
+          status: "paused",
+          lastActivityAt: nowIso,
+        });
+        return issueMppSessionChallenge({
+          request,
+          resourcePath,
+          amountSats,
+          sessionId: session.sessionId,
+          reason: "session_idle",
+        });
+      }
+
+      const computedHash = createPaymentHash(credential.payload.preimage);
+      if (computedHash !== session.paymentHash) {
+        throw createInvalidPaymentProofError();
+      }
+
+      const availableSats = session.depositSats - session.spentSats;
+      if (availableSats < amountSats) {
+        return issueMppSessionChallenge({
+          request,
+          resourcePath,
+          amountSats,
+          sessionId: session.sessionId,
+          reason: "insufficient_balance",
+        });
+      }
+
+      await mppSessionStore.saveSession({
+        ...session,
+        status: "open",
+        unitAmountSats: amountSats,
+        spentSats: session.spentSats + amountSats,
+        lastActivityAt: nowIso,
+        idleTimeoutAt: extendIdleTimeout(nowMs, resolvedConfig.mppIdleTimeoutSeconds),
+      });
+
+      return {
+        type: "allow",
+      };
+    }
+
+    if (action === "topUp") {
+      if (session.status !== "open" && session.status !== "paused") {
+        throw createInvalidCredentialError();
+      }
+
+      const computedHash = createPaymentHash(credential.payload.topUpPreimage);
+      if (computedHash !== storedChallenge.paymentHash) {
+        throw createInvalidPaymentProofError();
+      }
+
+      await ensureChargeSettled({
+        chargeId: storedChallenge.chargeId,
+        paymentHash: storedChallenge.paymentHash,
+        amountSats: storedChallenge.depositSats,
+        expiresAt: storedChallenge.expiresAt,
+        resource: storedChallenge.resource,
+      });
+
+      await mppSessionStore.saveSession({
+        ...session,
+        status: "open",
+        unitAmountSats: amountSats,
+        depositSats: session.depositSats + storedChallenge.depositSats,
+        spentSats: session.spentSats + amountSats,
+        lastActivityAt: nowIso,
+        idleTimeoutAt: extendIdleTimeout(nowMs, resolvedConfig.mppIdleTimeoutSeconds),
+      });
+
+      await mppSessionStore.saveChallenge({
+        ...storedChallenge,
+        consumed: true,
+      });
+
+      return {
+        type: "allow",
+      };
+    }
+
+    if (action === "close") {
+      if (session.status !== "open" && session.status !== "paused") {
+        throw createInvalidCredentialError();
+      }
+
+      const computedHash = createPaymentHash(credential.payload.preimage);
+      if (computedHash !== session.paymentHash) {
+        throw createInvalidPaymentProofError();
+      }
+
+      const refundSats = Math.max(0, session.depositSats - session.spentSats);
+      const adapter = createZbdLightningAdapter({
+        apiKey: resolvedConfig.apiKey,
+        zbdApiBaseUrl: process.env.ZBD_API_BASE_URL,
+      });
+
+      let refundStatus: "pending" | "succeeded" | "failed" | "skipped" = "skipped";
+      let refundReference: string | null = null;
+      let responseStatus = 200;
+      let responseBody: Record<string, unknown>;
+
+      try {
+        if (refundSats > 0) {
+          const refund = await refundLightningSessionBalance({
+            adapter,
+            amountSats: refundSats,
+            returnInvoice: session.returnInvoice ?? undefined,
+            returnLightningAddress: session.returnLightningAddress ?? undefined,
+          });
+          refundStatus = "succeeded";
+          refundReference = refund.paymentId ?? refund.paymentHash;
+        }
+
+        await mppSessionStore.saveSession({
+          ...session,
+          status: "closed",
+          closedAt: nowIso,
+          lastActivityAt: nowIso,
+          refundSats,
+          refundStatus,
+          refundReference,
+        });
+
+        await mppSessionStore.saveChallenge({
+          ...storedChallenge,
+          consumed: true,
+        });
+
+        responseBody = buildSessionCloseBody({
+          sessionId: session.sessionId,
+          status: "closed",
+          refundedSats: refundSats,
+          refundStatus,
+          refundReference,
+        });
+      } catch (error) {
+        refundStatus = "failed";
+        responseStatus = 502;
+
+        await mppSessionStore.saveSession({
+          ...session,
+          status: "refund_failed",
+          closedAt: nowIso,
+          lastActivityAt: nowIso,
+          refundSats,
+          refundStatus,
+          refundReference,
+        });
+
+        responseBody = {
+          error: {
+            code: "refund_failed",
+            message:
+              error instanceof Error ? error.message : "Session refund failed",
+          },
+          ...buildSessionCloseBody({
+            sessionId: session.sessionId,
+            status: "refund_failed",
+            refundedSats: refundSats,
+            refundStatus,
+            refundReference,
+          }),
+        };
+      }
+
+      return {
+        type: "respond",
+        status: responseStatus,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: responseBody,
+      };
+    }
+
+    throw createInvalidCredentialError();
+  };
 
   const evaluateRequest: PaymentMiddlewareFoundation<RequestLike>["evaluateRequest"] =
     async (request, context) => {
@@ -338,139 +924,68 @@ export const createPaymentMiddlewareFoundation = <RequestLike>(
       }
 
       if (resolvedConfig.protocol === "MPP" && !paymentToken) {
-        try {
-          const challenge = await createCharge({
-            apiKey: resolvedConfig.apiKey,
-            amountSats,
+        if (resolvedConfig.mppIntent === "session") {
+          return issueMppSessionChallenge({
+            request,
             resourcePath: context.resourcePath,
-          });
-
-          const challengeId = crypto.randomUUID();
-          const realm = resolveRequestRealm(request);
-          const expires = new Date(challenge.expiresAt * 1000).toISOString();
-          const requestToken = encodePaymentRequest({
-            amount: String(amountSats),
-            currency: "sat",
-            description: context.resourcePath,
-            methodDetails: {
-              invoice: challenge.invoice,
-              paymentHash: challenge.paymentHash,
-              network: "mainnet",
-            },
-          });
-
-          const paymentChallenge = {
-            id: challengeId,
-            realm,
-            method: "lightning" as const,
-            intent: "charge" as const,
-            request: requestToken,
-            expires,
-          };
-
-          mppChargeChallenges.set(challengeId, {
-            chargeId: challenge.chargeId,
-            paymentHash: challenge.paymentHash,
             amountSats,
-            resource: context.resourcePath,
-            expiresAt: challenge.expiresAt,
-            challenge: paymentChallenge,
-            consumed: false,
+            reason: "new_session",
           });
-
-          return {
-            type: "deny",
-            status: createPaymentRequiredError().status,
-            headers: {
-              "WWW-Authenticate": `Payment id="${challengeId}", realm="${realm}", method="lightning", intent="charge", request="${requestToken}", expires="${expires}"`,
-              "Content-Type": "application/json",
-              "Cache-Control": "no-store",
-            },
-            body: createMppPaymentRequiredBody({
-              paymentChallenge,
-              invoice: challenge.invoice,
-              paymentHash: challenge.paymentHash,
-              amountSats,
-            }),
-          };
-        } catch (error) {
-          const reason = error instanceof Error ? error.message : undefined;
-          return denyFromError(createInvoiceCreationFailedError(reason));
         }
+        return issueMppChargeChallenge({
+          request,
+          resourcePath: context.resourcePath,
+          amountSats,
+        });
       }
 
       if (resolvedConfig.protocol === "MPP" && paymentToken) {
         let credential;
         try {
-          credential = decodePaymentCredential<LightningChargeCredentialPayload>(paymentToken);
+          credential = decodePaymentCredential<
+            LightningChargeCredentialPayload | LightningSessionCredentialPayload
+          >(paymentToken);
         } catch {
           return denyFromError(createInvalidCredentialError());
         }
 
-        if (credential.challenge.method !== "lightning" || credential.challenge.intent !== "charge") {
-          return denyFromError(createInvalidCredentialError());
-        }
-
-        const stored = mppChargeChallenges.get(credential.challenge.id);
-        if (!stored || stored.consumed) {
-          return denyFromError(createInvalidCredentialError());
-        }
-
-        const matchesChallenge =
-          stored.challenge.id === credential.challenge.id &&
-          stored.challenge.realm === credential.challenge.realm &&
-          stored.challenge.method === credential.challenge.method &&
-          stored.challenge.intent === credential.challenge.intent &&
-          stored.challenge.request === credential.challenge.request &&
-          stored.challenge.expires === credential.challenge.expires;
-
-        if (!matchesChallenge) {
-          return denyFromError(createInvalidCredentialError());
-        }
-
-        const now = Math.floor(Date.now() / 1000);
-        if (stored.expiresAt <= now) {
-          return denyFromError(createTokenExpiredError());
-        }
-
-        if (stored.resource !== context.resourcePath || stored.amountSats !== amountSats) {
-          return denyFromError(createAmountMismatchError());
-        }
-
-        const computedHash = createPaymentHash(credential.payload.preimage);
-        if (computedHash !== stored.paymentHash) {
-          return denyFromError(createInvalidPaymentProofError());
-        }
-
-        const settledFromStore = await tokenStore.isSettled(
-          stored.chargeId,
-          stored.paymentHash,
-        );
-
-        if (!settledFromStore) {
-          const charge = await getCharge({
-            apiKey: resolvedConfig.apiKey,
-            chargeId: stored.chargeId,
-          });
-
-          if (!charge.settled || charge.paymentHash !== stored.paymentHash) {
-            return denyFromError(createInvalidPaymentProofError());
+        try {
+          if (credential.challenge.method !== "lightning") {
+            return denyFromError(createInvalidCredentialError());
           }
 
-          await tokenStore.markSettled({
-            chargeId: stored.chargeId,
-            paymentHash: stored.paymentHash,
-            amountSats: stored.amountSats,
-            expiresAt: stored.expiresAt,
-            resource: stored.resource,
-          });
+          if (credential.challenge.intent === "charge") {
+            return await handleMppChargeCredential(
+              credential as {
+                challenge: PaymentChallengeContext;
+                payload: LightningChargeCredentialPayload;
+              },
+              amountSats,
+              context.resourcePath,
+            );
+          }
+
+          if (credential.challenge.intent === "session") {
+            return await handleMppSessionCredential(
+              request,
+              credential as {
+                challenge: PaymentChallengeContext;
+                payload: LightningSessionCredentialPayload;
+              },
+              amountSats,
+              context.resourcePath,
+            );
+          }
+
+          return denyFromError(createInvalidCredentialError());
+        } catch (error) {
+          if (error instanceof AgentPayError) {
+            return denyFromError(error);
+          }
+
+          const reason = error instanceof Error ? error.message : undefined;
+          return denyFromError(createInvoiceCreationFailedError(reason));
         }
-
-        stored.consumed = true;
-
-        return {
-          type: "allow",
-        };
       }
 
       if (!parsed) {

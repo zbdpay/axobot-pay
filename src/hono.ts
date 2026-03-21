@@ -38,7 +38,7 @@ export const createHonoPaymentMiddleware = (
       resourcePath,
     });
 
-    if (decision.type === "deny") {
+    if (decision.type !== "allow") {
       if (decision.headers) {
         for (const [name, value] of Object.entries(decision.headers)) {
           context.header?.(name, value);

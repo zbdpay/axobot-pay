@@ -18,7 +18,7 @@ export const withPaymentRequired = <Context = unknown>(
       resourcePath: new URL(request.url).pathname,
     });
 
-    if (decision.type === "deny") {
+    if (decision.type !== "allow") {
       const responseInit: ResponseInit = {
         status: decision.status,
       };

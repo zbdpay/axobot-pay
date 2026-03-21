@@ -65,7 +65,7 @@ export const createExpressPaymentMiddleware = (
       resourcePath: normalizeResourcePath(request),
     });
 
-    if (decision.type === "deny") {
+    if (decision.type !== "allow") {
       if (decision.headers) {
         for (const [name, value] of Object.entries(decision.headers)) {
           response.setHeader?.(name, value);
