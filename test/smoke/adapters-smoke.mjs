@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
-const root = await import("@zbdpay/agent-pay");
-const next = await import("@zbdpay/agent-pay/next");
+const root = await import("@axobot/pay");
+const next = await import("@axobot/pay/next");
 
 const previousFetch = globalThis.fetch;
 globalThis.fetch = async () => {

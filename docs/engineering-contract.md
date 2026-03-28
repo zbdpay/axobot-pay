@@ -1,4 +1,4 @@
-# Engineering Contract — `@zbdpay/agent-pay`
+# Engineering Contract — `@axobot/pay`
 
 > **Status**: Normative. All implementation work in this repository must conform to every rule in this document.
 > **Scope**: Server-side L402 middleware for Express, Next.js, and Hono. Issues 402 challenges via ZBD, verifies macaroon/preimage proofs, and gates handler execution behind confirmed Lightning payments.
@@ -129,8 +129,8 @@ The npm package provenance attestation (`--provenance` flag) MUST be enabled on 
 
 The package exposes framework-specific entry points:
 
-- `@zbdpay/agent-pay` — Express / Hono middleware
-- `@zbdpay/agent-pay/next` — Next.js App Router handler wrapper
+- `@axobot/pay` — Express / Hono middleware
+- `@axobot/pay/next` — Next.js App Router handler wrapper
 
 Both entry points are declared in `package.json` `exports`. Adding a new entry point is a minor version change. Removing or renaming an existing entry point is a major version change.
 

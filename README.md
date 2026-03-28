@@ -1,11 +1,11 @@
-# @zbdpay/agent-pay
+# @axobot/pay
 
 Framework adapters and core logic for L402 payment-gated HTTP routes.
 
 Supports:
 - Express middleware
 - Hono middleware
-- Next.js route wrapper (`@zbdpay/agent-pay/next`)
+- Next.js route wrapper (`@axobot/pay/next`)
 
 Want to run this immediately? See [Examples (Fastest Way to Run)](#examples-fastest-way-to-run).
 
@@ -17,7 +17,7 @@ Want to run this immediately? See [Examples (Fastest Way to Run)](#examples-fast
 ## Install
 
 ```bash
-npm install @zbdpay/agent-pay
+npm install @axobot/pay
 ```
 
 ## Quick Start
@@ -26,7 +26,7 @@ npm install @zbdpay/agent-pay
 
 ```ts
 import express from "express";
-import { createExpressPaymentMiddleware } from "@zbdpay/agent-pay";
+import { createExpressPaymentMiddleware } from "@axobot/pay";
 
 const app = express();
 
@@ -46,7 +46,7 @@ app.get(
 
 ```ts
 import { Hono } from "hono";
-import { createHonoPaymentMiddleware } from "@zbdpay/agent-pay";
+import { createHonoPaymentMiddleware } from "@axobot/pay";
 
 const app = new Hono();
 
@@ -62,7 +62,7 @@ app.use(
 ### Next.js Route Handlers
 
 ```ts
-import { withPaymentRequired } from "@zbdpay/agent-pay/next";
+import { withPaymentRequired } from "@axobot/pay/next";
 
 export const GET = withPaymentRequired(
   {
@@ -154,7 +154,7 @@ Main package:
 
 Subpath export:
 
-- `@zbdpay/agent-pay/next` -> `withPaymentRequired`
+- `@axobot/pay/next` -> `withPaymentRequired`
 
 ## Scripts
 
