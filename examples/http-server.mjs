@@ -102,6 +102,6 @@ server.listen(port, () => {
   console.log(`agent-pay example listening on http://localhost:${port}`);
   console.log(`protected endpoint: http://localhost:${port}/protected`);
   console.log("set ZBD_PAY_DEBUG=1 for verbose logs");
-  console.log("test with zbdw:");
-  console.log(`zbdw fetch \"http://localhost:${port}/protected\" --max-sats ${amountSats}`);
+  console.log("test with axo:");
+  console.log(`axo fetch \"http://localhost:${port}/protected\" --max-sats ${amountSats}`);
 });
