@@ -11,7 +11,7 @@ import {
 import crypto from "node:crypto";
 import { resolvePaymentConfig } from "./config.js";
 import {
-  AgentPayError,
+  AxoPayError,
   createAmountMismatchError,
   createInvalidCredentialError,
   createInvalidPaymentProofError,
@@ -117,7 +117,7 @@ export type PaymentDecision =
       headers?: Record<string, string>;
     };
 
-const denyFromError = (error: AgentPayError): PaymentDecision => {
+const denyFromError = (error: AxoPayError): PaymentDecision => {
   return {
     type: "deny",
     status: error.status,
@@ -916,7 +916,7 @@ export const createPaymentMiddlewareFoundation = <RequestLike>(
             },
           };
         } catch (error) {
-          if (error instanceof AgentPayError && error.code === "configuration_error") {
+          if (error instanceof AxoPayError && error.code === "configuration_error") {
             return denyFromError(error);
           }
 
@@ -981,7 +981,7 @@ export const createPaymentMiddlewareFoundation = <RequestLike>(
 
           return denyFromError(createInvalidCredentialError());
         } catch (error) {
-          if (error instanceof AgentPayError) {
+          if (error instanceof AxoPayError) {
             return denyFromError(error);
           }
 

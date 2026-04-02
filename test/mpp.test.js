@@ -68,7 +68,7 @@ const withIsolatedFetch = async (fetchImpl, handler) => {
 };
 
 const createTempTokenStorePath = async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-pay-mpp-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "axo-pay-mpp-"));
   return path.join(root, "server-tokens.json");
 };
 

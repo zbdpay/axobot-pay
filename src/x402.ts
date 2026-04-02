@@ -1,4 +1,4 @@
-import { AgentPayError } from "./errors.js";
+import { AxoPayError } from "./errors.js";
 import type { PaymentConfig } from "./types.js";
 
 const DEFAULT_BTC_PRICE_URL =
@@ -27,7 +27,7 @@ const resolveProviderConfig = (
   ).trim();
 
   if (!url) {
-    throw new AgentPayError(
+    throw new AxoPayError(
       "configuration_error",
       "USDC provider URL is required for USDC middleware",
       500,
@@ -35,7 +35,7 @@ const resolveProviderConfig = (
   }
 
   if (!apiKey) {
-    throw new AgentPayError(
+    throw new AxoPayError(
       "configuration_error",
       "USDC provider API key is required for USDC middleware",
       500,

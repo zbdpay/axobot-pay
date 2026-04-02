@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  AgentPayError,
+  AxoPayError,
   createExpressPaymentMiddleware,
   createHonoPaymentMiddleware,
 } from "../dist/index.js";
@@ -144,7 +144,7 @@ test("missing ZBD_API_KEY throws configuration_error", () => {
         createExpressPaymentMiddleware({ amount: 100 });
       },
       (error) => {
-        assert.ok(error instanceof AgentPayError);
+        assert.ok(error instanceof AxoPayError);
         assert.equal(error.code, "configuration_error");
         assert.equal(error.status, 500);
         return true;

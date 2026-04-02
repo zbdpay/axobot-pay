@@ -10,7 +10,7 @@ const debugLog = (...values) => {
     return;
   }
 
-  console.log("[agent-pay:debug]", ...values);
+  console.log("[axo-pay:debug]", ...values);
 };
 
 const foundation = createPaymentMiddlewareFoundation({
@@ -99,7 +99,7 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`agent-pay example listening on http://localhost:${port}`);
+  console.log(`axo-pay example listening on http://localhost:${port}`);
   console.log(`protected endpoint: http://localhost:${port}/protected`);
   console.log("set ZBD_PAY_DEBUG=1 for verbose logs");
   console.log("test with axo:");

@@ -173,7 +173,7 @@ Main package:
 - `getBtcUsdRate`
 - `satsToUsdcAmount`
 - `verifyX402Payment`
-- `AgentPayError`
+- `AxoPayError`
 - `createConfigurationError`
 - related TS types
 

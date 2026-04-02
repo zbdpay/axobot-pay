@@ -1,4 +1,4 @@
-export { AgentPayError, createConfigurationError } from "./errors.js";
+export { AxoPayError, createConfigurationError } from "./errors.js";
 export { createPaymentMiddlewareFoundation } from "./core.js";
 export { createExpressPaymentMiddleware } from "./express.js";
 export { createHonoPaymentMiddleware } from "./hono.js";
